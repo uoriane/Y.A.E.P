@@ -4,6 +4,19 @@ import { useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useNavigate } from 'react-router-dom'
 
+type UserRole = 'student' | 'trainer' | 'admin'
+
+function getRoleFromMetadata(metadata: unknown): UserRole | undefined {
+  if (!metadata || typeof metadata !== 'object') return undefined
+
+  const role = (metadata as { role?: unknown }).role
+  if (role === 'student' || role === 'trainer' || role === 'admin') {
+    return role
+  }
+
+  return undefined
+}
+
 export function SignInPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -30,11 +43,7 @@ export function SignInPage() {
       const { data: userData, error: userErr } = await supabase.auth.getUser()
       if (userErr) throw userErr
 
-      const role = (userData.user?.user_metadata as any)?.role as
-        | 'student'
-        | 'trainer'
-        | 'admin'
-        | undefined
+      const role = getRoleFromMetadata(userData.user?.user_metadata)
 
       if (role === 'trainer') navigate('/trainer-dashboard')
       else if (role === 'admin') navigate('/admin-dashboard')

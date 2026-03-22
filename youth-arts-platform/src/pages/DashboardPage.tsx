@@ -1,6 +1,6 @@
 import '../App.css'
 import { SiteLayout } from './shared/SiteLayout'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabaseClient'
 
 const SUBMISSIONS_BUCKET = 'acdr-submissions'
@@ -32,20 +32,95 @@ type SessionUser = {
   user_metadata: Record<string, unknown>
 }
 
+type ProfileRow = {
+  full_name: string | null
+  category: string | null
+  role: 'student' | 'trainer' | 'admin'
+}
+
+type AssignmentViewFilter = 'all' | 'not-submitted' | 'submitted' | 'graded'
+
+function formatCategory(value: string): string {
+  return value
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function normalizeErrorMessage(message: string): string {
+  if (message.includes("Could not find the table 'public.applications'")) {
+    return 'Database setup is incomplete. The applications table is missing. Run supabase/schema.sql in Supabase SQL Editor, then reload the app.'
+  }
+
+  if (message.includes('infinite recursion detected in policy for relation "profiles"')) {
+    return 'Your database policies are outdated. Re-run supabase/schema.sql to apply the fixed RLS policies.'
+  }
+
+  if (message.toLowerCase().includes('storage') || message.toLowerCase().includes('bucket')) {
+    return 'Upload failed due to storage permissions. Re-run supabase/schema.sql and try again.'
+  }
+
+  return message
+}
+
 export function DashboardPage() {
-  const [studentCategory, setStudentCategory] = useState<string>('')
-  const [studentName, setStudentName] = useState<string>('')
+  const [studentCategory, setStudentCategory] = useState('')
+  const [studentName, setStudentName] = useState('')
   const [applicationStatus, setApplicationStatus] = useState<
     'pending' | 'approved' | 'rejected' | ''
   >('')
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [submissions, setSubmissions] = useState<Submission[]>([])
-  const [activeAssignmentId, setActiveAssignmentId] = useState<string>('')
+  const [activeAssignmentId, setActiveAssignmentId] = useState('')
 
+  const [assignmentFilter, setAssignmentFilter] =
+    useState<AssignmentViewFilter>('all')
   const [fileToUpload, setFileToUpload] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [pageLoading, setPageLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
+  const activeAssignment = assignments.find(
+    (assignment) => assignment.id === activeAssignmentId,
+  )
+
+  const activeSubmission = submissions.find(
+    (submission) => submission.assignment_id === activeAssignmentId,
+  )
+
+  const assignmentStatusMap = useMemo(() => {
+    const map = new Map<string, 'not-submitted' | 'submitted' | 'graded'>()
+
+    for (const assignment of assignments) {
+      map.set(assignment.id, 'not-submitted')
+    }
+
+    for (const submission of submissions) {
+      if (submission.status === 'graded') {
+        map.set(submission.assignment_id, 'graded')
+      } else if (
+        !map.has(submission.assignment_id) ||
+        map.get(submission.assignment_id) === 'not-submitted'
+      ) {
+        map.set(submission.assignment_id, 'submitted')
+      }
+    }
+
+    return map
+  }, [assignments, submissions])
+
+  const filteredAssignments = useMemo(() => {
+    return assignments.filter((assignment) => {
+      if (assignmentFilter === 'all') return true
+      return assignmentStatusMap.get(assignment.id) === assignmentFilter
+    })
+  }, [assignments, assignmentFilter, assignmentStatusMap])
+
+  const submittedCount = submissions.length
+  const gradedCount = submissions.filter((submission) => submission.status === 'graded').length
+  const progressPercent =
+    assignments.length > 0 ? Math.round((submittedCount / assignments.length) * 100) : 0
 
   useEffect(() => {
     ;(async () => {
@@ -66,24 +141,27 @@ export function DashboardPage() {
         return
       }
 
-      const categoryValue = user.user_metadata?.category
-      const fullName = user.user_metadata?.full_name
-      const categoryString =
-        typeof categoryValue === 'string' ? categoryValue : ''
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('full_name, category, role')
+        .eq('user_id', user.id)
+        .maybeSingle<ProfileRow>()
+
+      const categoryValue = profileData?.category ?? user.user_metadata?.category
+      const fullName = profileData?.full_name ?? user.user_metadata?.full_name
+      const categoryString = typeof categoryValue === 'string' ? categoryValue : ''
 
       setStudentCategory(categoryString)
-      setStudentName(typeof fullName === 'string' ? fullName : 'Student')
+      setStudentName(typeof fullName === 'string' && fullName ? fullName : 'Student')
 
-      const roleValue = user.user_metadata?.role
-      const role =
-        typeof roleValue === 'string' ? (roleValue as string) : 'student'
+      const roleValue = profileData?.role ?? user.user_metadata?.role
+      const role = typeof roleValue === 'string' ? roleValue : 'student'
       if (role !== 'student') {
         setErrorMessage('This dashboard is for student accounts only.')
         setPageLoading(false)
         return
       }
 
-      // Phase 1 rule: only approved students can access assignments and submit work.
       const { data: applicationRow, error: appErr } = await supabase
         .from('applications')
         .select('status')
@@ -91,10 +169,7 @@ export function DashboardPage() {
         .maybeSingle()
 
       if (appErr) {
-        setErrorMessage(
-          appErr.message ??
-            'Could not load your application status. Please try again.',
-        )
+        setErrorMessage(normalizeErrorMessage(appErr.message))
         setPageLoading(false)
         return
       }
@@ -116,19 +191,14 @@ export function DashboardPage() {
         return
       }
 
-      // Load assignments for this category
-      const { data: assignmentData, error: assignmentsErr } =
-        await supabase
-          .from('assignments')
-          .select('id, category, title, due_date')
-          .eq('category', categoryString)
-          .order('due_date', { ascending: true })
+      const { data: assignmentData, error: assignmentsErr } = await supabase
+        .from('assignments')
+        .select('id, category, title, due_date')
+        .eq('category', categoryString)
+        .order('due_date', { ascending: true })
 
       if (assignmentsErr) {
-        setErrorMessage(
-          assignmentsErr.message ??
-            'Could not load assignments. Make sure you ran supabase/schema.sql.',
-        )
+        setErrorMessage(normalizeErrorMessage(assignmentsErr.message))
         setAssignments([])
         setSubmissions([])
         setPageLoading(false)
@@ -136,10 +206,8 @@ export function DashboardPage() {
       }
 
       setAssignments(assignmentData ?? [])
-      const firstAssignmentId = assignmentData?.[0]?.id ?? ''
-      setActiveAssignmentId(firstAssignmentId)
+      setActiveAssignmentId(assignmentData?.[0]?.id ?? '')
 
-      // Load the student's submissions
       const { data: submissionData, error: submissionsErr } = await supabase
         .from('submissions')
         .select(
@@ -149,10 +217,7 @@ export function DashboardPage() {
         .order('submitted_at', { ascending: false })
 
       if (submissionsErr) {
-        setErrorMessage(
-          submissionsErr.message ??
-            'Could not load your submissions. Make sure you ran supabase/schema.sql.',
-        )
+        setErrorMessage(normalizeErrorMessage(submissionsErr.message))
       } else {
         setSubmissions(submissionData ?? [])
       }
@@ -161,23 +226,18 @@ export function DashboardPage() {
     })()
   }, [])
 
-  const activeAssignment = assignments.find(
-    (a) => a.id === activeAssignmentId,
-  )
+  async function handleSubmitWork(event: FormEvent) {
+    event.preventDefault()
 
-  const activeSubmission = submissions.find(
-    (s) => s.assignment_id === activeAssignmentId,
-  )
-
-  async function handleSubmitWork(e: React.FormEvent) {
-    e.preventDefault()
     if (!activeAssignment) return
+
     if (applicationStatus !== 'approved') {
       setErrorMessage(
         'Your application has not been approved yet. Please wait for the administrator decision.',
       )
       return
     }
+
     if (!fileToUpload) {
       setErrorMessage('Please choose a file to upload.')
       return
@@ -196,22 +256,17 @@ export function DashboardPage() {
       const userId = user.data.user?.id
       if (!userId) throw new Error('Please sign in again.')
 
-      // Upload file to Supabase Storage
-      // We keep the path predictable so it's easy to find later.
       const filePath = `${userId}/${activeAssignment.id}/${Date.now()}_${fileToUpload.name}`
       const { error: uploadErr } = await supabase.storage
         .from(SUBMISSIONS_BUCKET)
         .upload(filePath, fileToUpload, {
           cacheControl: '3600',
-          upsert: true,
+          upsert: false,
           contentType: fileToUpload.type,
         })
 
       if (uploadErr) throw uploadErr
 
-      // If there is already a submission:
-      // - allow student to replace it while it's still "submitted"
-      // - if it's already graded, we keep it as-is.
       if (activeSubmission) {
         if (activeSubmission.status === 'graded') {
           setErrorMessage(
@@ -251,7 +306,6 @@ export function DashboardPage() {
         if (insertErr) throw insertErr
       }
 
-      // Refresh submissions list
       const { data: submissionData, error: submissionsErr } = await supabase
         .from('submissions')
         .select(
@@ -263,8 +317,13 @@ export function DashboardPage() {
       if (submissionsErr) throw submissionsErr
       setSubmissions(submissionData ?? [])
       setFileToUpload(null)
-    } catch (err: any) {
-      setErrorMessage(err.message ?? 'Upload failed. Please try again.')
+    } catch (err: unknown) {
+      const fallback = 'Upload failed. Please try again.'
+      const message =
+        err && typeof err === 'object' && 'message' in err
+          ? String((err as { message?: unknown }).message ?? fallback)
+          : fallback
+      setErrorMessage(normalizeErrorMessage(message))
     } finally {
       setUploading(false)
     }
@@ -284,7 +343,27 @@ export function DashboardPage() {
           <div className="dashboard-grid">
             <div className="dashboard-side">
               <div className="card">
-                <h3 className="card-title">Your Assignments</h3>
+                <div className="assignment-title-row">
+                  <h3 className="card-title">Your Assignments</h3>
+                  <select
+                    aria-label="Assignment filter"
+                    value={assignmentFilter}
+                    onChange={(event) =>
+                      setAssignmentFilter(event.target.value as AssignmentViewFilter)
+                    }
+                    style={{
+                      borderRadius: '0.5rem',
+                      border: '1px solid #d1d5db',
+                      padding: '0.35rem 0.5rem',
+                      font: 'inherit',
+                    }}
+                  >
+                    <option value="all">All</option>
+                    <option value="not-submitted">Not submitted</option>
+                    <option value="submitted">Submitted</option>
+                    <option value="graded">Graded</option>
+                  </select>
+                </div>
 
                 {pageLoading ? (
                   <div className="mini-meta" style={{ marginTop: '1rem' }}>
@@ -304,19 +383,24 @@ export function DashboardPage() {
                   <div className="mini-meta" style={{ marginTop: '1rem' }}>
                     No assignments found for your category yet.
                   </div>
+                ) : filteredAssignments.length === 0 ? (
+                  <div className="mini-meta" style={{ marginTop: '1rem' }}>
+                    No assignments match the selected filter.
+                  </div>
                 ) : (
                   <div style={{ marginTop: '0.75rem' }}>
-                    {assignments.map((a) => {
-                      const sub = submissions.find(
-                        (s) => s.assignment_id === a.id,
+                    {filteredAssignments.map((assignment) => {
+                      const submission = submissions.find(
+                        (row) => row.assignment_id === assignment.id,
                       )
-                      const isActive = a.id === activeAssignmentId
+                      const isActive = assignment.id === activeAssignmentId
+
                       return (
                         <button
-                          key={a.id}
+                          key={assignment.id}
                           type="button"
                           onClick={() => {
-                            setActiveAssignmentId(a.id)
+                            setActiveAssignmentId(assignment.id)
                             setFileToUpload(null)
                           }}
                           style={{
@@ -329,14 +413,16 @@ export function DashboardPage() {
                         >
                           <div className="assignment-item" style={{ borderBottom: 0 }}>
                             <div className="assignment-title-row">
-                              <div className="assignment-title">{a.title}</div>
+                              <div className="assignment-title">{assignment.title}</div>
                               <div className="mini-meta">
-                                {sub?.status === 'graded' ? sub.grade ?? '-' : sub?.status ?? 'Not submitted'}
+                                {submission?.status === 'graded'
+                                  ? `Graded (${submission.grade ?? '-'})`
+                                  : submission?.status === 'submitted'
+                                    ? 'Submitted'
+                                    : 'Not submitted'}
                               </div>
                             </div>
-                            <div className="mini-meta">
-                              Due: {a.due_date ?? '—'}
-                            </div>
+                            <div className="mini-meta">Due: {assignment.due_date ?? '—'}</div>
                           </div>
                         </button>
                       )
@@ -363,15 +449,15 @@ export function DashboardPage() {
                         id="activeAssignment"
                         required
                         value={activeAssignmentId}
-                        onChange={(e) => {
-                          setActiveAssignmentId(e.target.value)
+                        onChange={(event) => {
+                          setActiveAssignmentId(event.target.value)
                           setFileToUpload(null)
                         }}
                         disabled={assignments.length === 0}
                       >
-                        {assignments.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.title}
+                        {assignments.map((assignment) => (
+                          <option key={assignment.id} value={assignment.id}>
+                            {assignment.title}
                           </option>
                         ))}
                       </select>
@@ -383,8 +469,8 @@ export function DashboardPage() {
                         id="fileInput"
                         type="file"
                         required
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] ?? null
+                        onChange={(event) => {
+                          const file = event.target.files?.[0] ?? null
                           setFileToUpload(file)
                         }}
                       />
@@ -444,40 +530,60 @@ export function DashboardPage() {
                   </div>
                 )}
               </div>
+
+              <div className="card assist-card">
+                <div className="card-title">On-screen Help</div>
+                <div className="mini-meta" style={{ marginTop: '0.4rem' }}>
+                  1. Choose an assignment from the list.
+                </div>
+                <div className="mini-meta">2. Upload your file and submit.</div>
+                <div className="mini-meta">3. Check Latest Feedback after trainer review.</div>
+              </div>
             </div>
 
+            <div className="dashboard-side">
               <div className="card">
                 <div className="progress-row">
                   <div>
                     <div className="card-title">Progress</div>
                     <div className="mini-meta">
-                      Category: {studentCategory ? studentCategory.replace('-', ' ') : '—'}
+                      Category: {studentCategory ? formatCategory(studentCategory) : '—'}
                     </div>
                   </div>
-                  <div className="mini-meta">
-                    {assignments.length > 0
-                      ? Math.round(
-                          (submissions.length / assignments.length) * 100,
-                        ) + '%'
-                      : '0%'}
-                  </div>
+                  <div className="mini-meta">{progressPercent}%</div>
                 </div>
 
                 <div className="progress-bar" aria-label="Progress bar">
-                  <div
-                    className="progress-fill"
-                    style={{
-                      width:
-                        assignments.length > 0
-                          ? Math.round(
-                              (submissions.length / assignments.length) * 100,
-                            ) + '%'
-                          : '0%',
-                    }}
-                  />
+                  <div className="progress-fill" style={{ width: `${progressPercent}%` }} />
                 </div>
+
                 <div className="mini-meta" style={{ marginTop: '0.75rem' }}>
                   Keep going. Complete submissions to improve your marks.
+                </div>
+
+                <div
+                  style={{
+                    marginTop: '1rem',
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                    gap: '0.75rem',
+                  }}
+                >
+                  <div className="mini-meta">
+                    <strong style={{ color: '#111827' }}>{assignments.length}</strong>
+                    <br />
+                    Total
+                  </div>
+                  <div className="mini-meta">
+                    <strong style={{ color: '#111827' }}>{submittedCount}</strong>
+                    <br />
+                    Submitted
+                  </div>
+                  <div className="mini-meta">
+                    <strong style={{ color: '#111827' }}>{gradedCount}</strong>
+                    <br />
+                    Graded
+                  </div>
                 </div>
               </div>
 
@@ -490,12 +596,17 @@ export function DashboardPage() {
                 ) : (
                   (() => {
                     const graded = submissions
-                      .filter((s) => s.status === 'graded' && (s.feedback || s.grade))
+                      .filter(
+                        (submission) =>
+                          submission.status === 'graded' &&
+                          (submission.feedback || submission.grade),
+                      )
                       .sort((a, b) => {
-                        const at = a.graded_at ? +new Date(a.graded_at) : 0
-                        const bt = b.graded_at ? +new Date(b.graded_at) : 0
-                        return bt - at
+                        const aTime = a.graded_at ? +new Date(a.graded_at) : 0
+                        const bTime = b.graded_at ? +new Date(b.graded_at) : 0
+                        return bTime - aTime
                       })[0]
+
                     if (!graded) {
                       return (
                         <div className="mini-meta" style={{ marginTop: '0.15rem' }}>
@@ -510,17 +621,20 @@ export function DashboardPage() {
                           {graded.feedback ? graded.feedback : '—'}
                         </div>
                         <div className="mini-meta" style={{ marginTop: '0.85rem' }}>
-                          Trainer reviewed: {graded.graded_at ? new Date(graded.graded_at).toLocaleDateString() : '—'}
+                          Trainer reviewed:{' '}
+                          {graded.graded_at
+                            ? new Date(graded.graded_at).toLocaleDateString()
+                            : '—'}
                         </div>
                       </>
                     )
                   })()
                 )}
               </div>
+            </div>
           </div>
         </div>
       </section>
     </SiteLayout>
   )
 }
-

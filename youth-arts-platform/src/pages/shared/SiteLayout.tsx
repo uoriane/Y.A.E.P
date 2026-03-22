@@ -20,7 +20,9 @@ export function SiteLayout({ children }: Props) {
           </Link>
 
           <nav className="nav-actions">
-            <button className="text-button">Help</button>
+            <Link to="/help" className="text-button" style={{ border: 0 }}>
+              Help
+            </Link>
             <Link to="/signin" className="text-button" style={{ border: 0 }}>
               Sign In
             </Link>

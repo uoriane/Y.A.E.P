@@ -1,4 +1,4 @@
--- Arts Rwanda Youth Learning Platform (Phase 1)
+-- Arts Rwanda Youth Learning Platform
 -- Create tables and storage bucket for student submissions and trainer review.
 --
 -- IMPORTANT:
@@ -23,7 +23,7 @@ create table if not exists public.profiles (
 -- =========================
 -- Applications (admin selects participants)
 -- =========================
--- In Phase 1, students apply (sign up) and the admin approves/rejects.
+-- Students apply at registration time, and the admin approves/rejects.
 create table if not exists public.applications (
   user_id uuid primary key references public.profiles (user_id) on delete cascade,
   category text,
@@ -90,7 +90,7 @@ where p.role = 'student'
 on conflict (user_id) do nothing;
 
 -- =========================
--- Assignments (Phase 1)
+-- Assignments
 -- =========================
 -- These are the tasks students submit for.
 create table if not exists public.assignments (
@@ -100,6 +100,12 @@ create table if not exists public.assignments (
   due_date date,
   created_at timestamptz not null default now()
 );
+
+alter table public.assignments
+add column if not exists created_by uuid references auth.users(id) on delete set null;
+
+create index if not exists assignments_category_due_date_idx
+on public.assignments(category, due_date);
 
 -- Seed a few example assignments (safe to rerun)
 insert into public.assignments (category, title, due_date)
@@ -146,6 +152,27 @@ insert into storage.buckets (id, name, public)
 values ('acdr-submissions', 'acdr-submissions', true)
 on conflict (id) do nothing;
 
+drop policy if exists "acdr_submissions_read" on storage.objects;
+create policy "acdr_submissions_read"
+on storage.objects
+for select
+using (bucket_id = 'acdr-submissions');
+
+drop policy if exists "acdr_submissions_insert" on storage.objects;
+create policy "acdr_submissions_insert"
+on storage.objects
+for insert
+to authenticated
+with check (bucket_id = 'acdr-submissions');
+
+drop policy if exists "acdr_submissions_update" on storage.objects;
+create policy "acdr_submissions_update"
+on storage.objects
+for update
+to authenticated
+using (bucket_id = 'acdr-submissions')
+with check (bucket_id = 'acdr-submissions');
+
 -- =========================
 -- RLS Policies
 -- =========================
@@ -154,67 +181,75 @@ alter table public.applications enable row level security;
 alter table public.assignments enable row level security;
 alter table public.submissions enable row level security;
 
+create or replace function public.current_user_role()
+returns text
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select coalesce(
+    (
+      select p.role
+      from public.profiles p
+      where p.user_id = auth.uid()
+      limit 1
+    ),
+    auth.jwt() -> 'user_metadata' ->> 'role',
+    'student'
+  );
+$$;
+
 -- Profiles:
 -- - Users can read their own profile
--- - Admin can read all profiles (useful for Phase 1 admin view)
+-- - Admin can read all profiles
+drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own"
 on public.profiles
 for select
 using (user_id = auth.uid());
 
+drop policy if exists "profiles_select_admin" on public.profiles;
 create policy "profiles_select_admin"
 on public.profiles
 for select
-using (
-  exists (
-    select 1 from public.profiles p
-    where p.user_id = auth.uid()
-      and p.role = 'admin'
-  )
-);
+using (public.current_user_role() = 'admin');
 
 -- Profiles insert/update is handled by the trigger; users don't need direct write access.
+-- Admins can update profile role/category for account management.
+drop policy if exists "profiles_update_admin" on public.profiles;
+create policy "profiles_update_admin"
+on public.profiles
+for update
+using (public.current_user_role() = 'admin')
+with check (public.current_user_role() = 'admin');
 
 -- Applications:
 -- - Students can read their own application status
 -- - Admin can read all applications and update decision status
+drop policy if exists "applications_select_own" on public.applications;
 create policy "applications_select_own"
 on public.applications
 for select
 using (user_id = auth.uid());
 
+drop policy if exists "applications_select_admin" on public.applications;
 create policy "applications_select_admin"
 on public.applications
 for select
-using (
-  exists (
-    select 1 from public.profiles p
-    where p.user_id = auth.uid()
-      and p.role = 'admin'
-  )
-);
+using (public.current_user_role() = 'admin');
 
+drop policy if exists "applications_update_admin" on public.applications;
 create policy "applications_update_admin"
 on public.applications
 for update
-using (
-  exists (
-    select 1 from public.profiles p
-    where p.user_id = auth.uid()
-      and p.role = 'admin'
-  )
-)
-with check (
-  exists (
-    select 1 from public.profiles p
-    where p.user_id = auth.uid()
-      and p.role = 'admin'
-  )
-);
+using (public.current_user_role() = 'admin')
+with check (public.current_user_role() = 'admin');
 
 -- Assignments:
--- - Only approved students can read assignments in Phase 1
+-- - Only approved students can read assignments
 drop policy if exists "assignments_select_authenticated" on public.assignments;
+drop policy if exists "assignments_select_approved_students" on public.assignments;
 create policy "assignments_select_approved_students"
 on public.assignments
 for select
@@ -226,10 +261,79 @@ using (
   )
 );
 
+drop policy if exists "assignments_select_trainer_category" on public.assignments;
+create policy "assignments_select_trainer_category"
+on public.assignments
+for select
+using (
+  public.current_user_role() = 'trainer'
+  and exists (
+    select 1 from public.profiles p
+    where p.user_id = auth.uid()
+      and p.category = assignments.category
+  )
+);
+
+drop policy if exists "assignments_select_admin" on public.assignments;
+create policy "assignments_select_admin"
+on public.assignments
+for select
+using (public.current_user_role() = 'admin');
+
+drop policy if exists "assignments_insert_trainer_category" on public.assignments;
+create policy "assignments_insert_trainer_category"
+on public.assignments
+for insert
+to authenticated
+with check (
+  public.current_user_role() = 'trainer'
+  and exists (
+    select 1 from public.profiles p
+    where p.user_id = auth.uid()
+      and p.category = assignments.category
+  )
+);
+
+drop policy if exists "assignments_insert_admin" on public.assignments;
+create policy "assignments_insert_admin"
+on public.assignments
+for insert
+to authenticated
+with check (public.current_user_role() = 'admin');
+
+drop policy if exists "assignments_update_trainer_category" on public.assignments;
+create policy "assignments_update_trainer_category"
+on public.assignments
+for update
+using (
+  public.current_user_role() = 'trainer'
+  and exists (
+    select 1 from public.profiles p
+    where p.user_id = auth.uid()
+      and p.category = assignments.category
+  )
+)
+with check (
+  public.current_user_role() = 'trainer'
+  and exists (
+    select 1 from public.profiles p
+    where p.user_id = auth.uid()
+      and p.category = assignments.category
+  )
+);
+
+drop policy if exists "assignments_update_admin" on public.assignments;
+create policy "assignments_update_admin"
+on public.assignments
+for update
+using (public.current_user_role() = 'admin')
+with check (public.current_user_role() = 'admin');
+
 -- Submissions:
 -- Insert:
 -- - students can create submissions for themselves only
 drop policy if exists "submissions_insert_student" on public.submissions;
+drop policy if exists "submissions_insert_student_approved_only" on public.submissions;
 create policy "submissions_insert_student_approved_only"
 on public.submissions
 for insert
@@ -248,6 +352,7 @@ with check (
 -- - trainers can read submissions in their category
 -- - admins can read all submissions
 drop policy if exists "submissions_select_student_own" on public.submissions;
+drop policy if exists "submissions_select_student_own_approved_only" on public.submissions;
 create policy "submissions_select_student_own_approved_only"
 on public.submissions
 for select
@@ -260,14 +365,15 @@ using (
   )
 );
 
+drop policy if exists "submissions_select_trainer_category" on public.submissions;
 create policy "submissions_select_trainer_category"
 on public.submissions
 for select
 using (
-  exists (
+  public.current_user_role() = 'trainer'
+  and exists (
     select 1 from public.profiles p
     where p.user_id = auth.uid()
-      and p.role = 'trainer'
       and p.category = submissions.category
   )
   and exists (
@@ -277,21 +383,17 @@ using (
   )
 );
 
+drop policy if exists "submissions_select_admin" on public.submissions;
 create policy "submissions_select_admin"
 on public.submissions
 for select
-using (
-  exists (
-    select 1 from public.profiles p
-    where p.user_id = auth.uid()
-      and p.role = 'admin'
-  )
-);
+using (public.current_user_role() = 'admin');
 
 -- Update:
 -- - students can update their own submission only while it is still 'submitted'
 -- - trainers can grade submissions for their category
 drop policy if exists "submissions_update_student_while_submitted" on public.submissions;
+drop policy if exists "submissions_update_student_while_submitted_approved_only" on public.submissions;
 create policy "submissions_update_student_while_submitted_approved_only"
 on public.submissions
 for update
@@ -314,14 +416,15 @@ with check (
   )
 );
 
+drop policy if exists "submissions_update_trainer_grade" on public.submissions;
 create policy "submissions_update_trainer_grade"
 on public.submissions
 for update
 using (
-  exists (
+  public.current_user_role() = 'trainer'
+  and exists (
     select 1 from public.profiles p
     where p.user_id = auth.uid()
-      and p.role = 'trainer'
       and p.category = submissions.category
   )
   and exists (
@@ -331,10 +434,10 @@ using (
   )
 )
 with check (
-  exists (
+  public.current_user_role() = 'trainer'
+  and exists (
     select 1 from public.profiles p
     where p.user_id = auth.uid()
-      and p.role = 'trainer'
       and p.category = submissions.category
   )
   and exists (

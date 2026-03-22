@@ -1,46 +1,15 @@
 import './App.css'
 import { Link } from 'react-router-dom'
+import { SiteLayout } from './pages/shared/SiteLayout'
 
 function App() {
   return (
-    <div className="app-root">
-      <SiteHeader />
-
-      <main>
-        <HeroSection />
-        <WhatWeOfferSection />
-        <ProgramCategoriesSection />
-        <CallToActionSection />
-      </main>
-
-      <SiteFooter />
-    </div>
-  )
-}
-
-function SiteHeader() {
-  return (
-    <header className="site-header">
-      <div className="site-header-inner">
-        <Link to="/" className="brand" style={{ textDecoration: 'none' }}>
-          <div className="brand-icon">A</div>
-          <div className="brand-text">
-            <div className="brand-name">Arts Rwanda</div>
-            <div className="brand-tagline">Youth Learning Platform</div>
-          </div>
-        </Link>
-
-        <nav className="nav-actions">
-          <button className="text-button">Help</button>
-          <Link to="/signin" className="text-button" style={{ border: 0 }}>
-            Sign In
-          </Link>
-          <Link to="/register" className="primary-button">
-            Register
-          </Link>
-        </nav>
-      </div>
-    </header>
+    <SiteLayout>
+      <HeroSection />
+      <WhatWeOfferSection />
+      <ProgramCategoriesSection />
+      <CallToActionSection />
+    </SiteLayout>
   )
 }
 
@@ -54,8 +23,12 @@ function HeroSection() {
         </p>
 
         <div className="hero-actions">
-          <button className="primary-button large">Get Started</button>
-          <button className="secondary-button large">Learn More</button>
+          <Link to="/register" className="primary-button large" style={{ textDecoration: 'none' }}>
+            Get Started
+          </Link>
+          <Link to="/help" className="secondary-button large" style={{ textDecoration: 'none' }}>
+            Learn More
+          </Link>
         </div>
       </div>
     </section>
@@ -175,21 +148,6 @@ function CallToActionSection() {
         </Link>
       </div>
     </section>
-  )
-}
-
-function SiteFooter() {
-  return (
-    <footer className="site-footer">
-      <div className="site-footer-inner">
-        <p className="footer-text">
-          © 2026 Arts Rwanda Youth Learning Platform
-        </p>
-        <p className="footer-subtext">
-          Supporting in-person Arts, Culture, and Design training
-        </p>
-      </div>
-    </footer>
   )
 }
 
