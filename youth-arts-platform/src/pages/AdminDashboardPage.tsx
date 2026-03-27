@@ -92,6 +92,7 @@ export function AdminDashboardPage() {
   const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([])
   const [loading, setLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
 
   const [pendingCount, setPendingCount] = useState(0)
   const [approvedCount, setApprovedCount] = useState(0)
@@ -227,6 +228,8 @@ export function AdminDashboardPage() {
         setAuditLogs((logRows ?? []) as AuditLogRow[])
       }
 
+      setLastUpdatedAt(new Date())
+
       setLoading(false)
     })()
   }, [])
@@ -244,6 +247,7 @@ export function AdminDashboardPage() {
     setPendingCount(apps.filter((application) => application.status === 'pending').length)
     setApprovedCount(apps.filter((application) => application.status === 'approved').length)
     setRejectedCount(apps.filter((application) => application.status === 'rejected').length)
+    setLastUpdatedAt(new Date())
   }
 
   async function refreshProfiles() {
@@ -254,6 +258,7 @@ export function AdminDashboardPage() {
 
     if (error) throw error
     setProfiles((data ?? []) as ProfileRow[])
+    setLastUpdatedAt(new Date())
   }
 
   async function refreshTrainerAssignments() {
@@ -264,6 +269,7 @@ export function AdminDashboardPage() {
 
     if (error) throw error
     setTrainerAssignments((data ?? []) as TrainerAssignmentRow[])
+    setLastUpdatedAt(new Date())
   }
 
   async function refreshAuditLogs() {
@@ -275,6 +281,7 @@ export function AdminDashboardPage() {
 
     if (error) throw error
     setAuditLogs((data ?? []) as AuditLogRow[])
+    setLastUpdatedAt(new Date())
   }
 
   async function decide(userId: string, nextStatus: 'approved' | 'rejected') {
@@ -442,6 +449,10 @@ export function AdminDashboardPage() {
             Review applications and approve selected participants for training.
           </p>
 
+          <div className="mini-meta" style={{ marginBottom: '1rem', textAlign: 'center' }}>
+            Last updated: {lastUpdatedAt ? lastUpdatedAt.toLocaleString() : '—'}
+          </div>
+
           <div className="dashboard-grid">
             <div className="card card-surface card-admin">
               <h3 className="card-title">Application Review</h3>
@@ -549,6 +560,17 @@ export function AdminDashboardPage() {
             </div>
 
             <div className="dashboard-side">
+              <div className="card card-surface card-demo-readiness">
+                <div className="card-title">Demo Readiness</div>
+                <div className="mini-meta" style={{ marginTop: '0.45rem' }}>
+                  Role: Admin
+                </div>
+                <div className="mini-meta">Applications pending: {pendingCount}</div>
+                <div className="mini-meta">Approved students: {approvedCount}</div>
+                <div className="mini-meta">Trainer assignments: {trainerAssignments.length}</div>
+                <div className="mini-meta">Recent audit logs: {auditLogs.length}</div>
+              </div>
+
               <div className="card card-surface card-admin">
                 <div className="card-title">Program Snapshot</div>
                 <div className="metric-grid">
@@ -574,62 +596,66 @@ export function AdminDashboardPage() {
                 </div>
 
                 <div style={{ marginTop: '0.75rem' }}>
-                  {profiles.slice(0, 8).map((profile) => {
-                    const isSelf = profile.user_id === currentAdminId
-                    return (
-                      <div key={profile.user_id} className="assignment-item" style={{ borderBottom: 0 }}>
-                        <div className="assignment-title-row">
-                          <div className="assignment-title">{profile.full_name ?? 'Unnamed user'}</div>
-                          <div className="mini-meta">{formatCategory(profile.category)}</div>
-                        </div>
+                  {profiles.length === 0 ? (
+                    <div className="mini-meta">No user accounts available yet.</div>
+                  ) : (
+                    profiles.slice(0, 8).map((profile) => {
+                      const isSelf = profile.user_id === currentAdminId
+                      return (
+                        <div key={profile.user_id} className="assignment-item" style={{ borderBottom: 0 }}>
+                          <div className="assignment-title-row">
+                            <div className="assignment-title">{profile.full_name ?? 'Unnamed user'}</div>
+                            <div className="mini-meta">{formatCategory(profile.category)}</div>
+                          </div>
 
-                        <div style={{ marginTop: '0.4rem' }}>
-                          <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                            <select
-                              aria-label="User role"
-                              value={profile.role}
-                              disabled={isSelf || updatingUserId === profile.user_id}
-                              onChange={(event) =>
-                                updateRole(
-                                  profile.user_id,
-                                  event.target.value as ProfileRow['role'],
-                                )
-                              }
-                              style={{
-                                borderRadius: '0.45rem',
-                                border: '1px solid #d1d5db',
-                                padding: '0.3rem 0.45rem',
-                                font: 'inherit',
-                              }}
-                            >
-                              <option value="student">student</option>
-                              <option value="trainer">trainer</option>
-                              <option value="admin">admin</option>
-                            </select>
+                          <div style={{ marginTop: '0.4rem' }}>
+                            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                              <select
+                                aria-label="User role"
+                                value={profile.role}
+                                disabled={isSelf || updatingUserId === profile.user_id}
+                                onChange={(event) =>
+                                  updateRole(
+                                    profile.user_id,
+                                    event.target.value as ProfileRow['role'],
+                                  )
+                                }
+                                style={{
+                                  borderRadius: '0.45rem',
+                                  border: '1px solid #d1d5db',
+                                  padding: '0.3rem 0.45rem',
+                                  font: 'inherit',
+                                }}
+                              >
+                                <option value="student">student</option>
+                                <option value="trainer">trainer</option>
+                                <option value="admin">admin</option>
+                              </select>
 
-                            <select
-                              aria-label="User category"
-                              value={profile.category ?? ''}
-                              disabled={updatingUserId === profile.user_id}
-                              onChange={(event) => updateCategory(profile, event.target.value)}
-                              style={{
-                                borderRadius: '0.45rem',
-                                border: '1px solid #d1d5db',
-                                padding: '0.3rem 0.45rem',
-                                font: 'inherit',
-                              }}
-                            >
-                              {CATEGORY_OPTIONS.map((option) => (
-                                <option key={option.value || 'none'} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
+                              <select
+                                aria-label="User category"
+                                value={profile.category ?? ''}
+                                disabled={updatingUserId === profile.user_id}
+                                onChange={(event) => updateCategory(profile, event.target.value)}
+                                style={{
+                                  borderRadius: '0.45rem',
+                                  border: '1px solid #d1d5db',
+                                  padding: '0.3rem 0.45rem',
+                                  font: 'inherit',
+                                }}
+                              >
+                                {CATEGORY_OPTIONS.map((option) => (
+                                  <option key={option.value || 'none'} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    )
-                  })}
+                      )
+                    })
+                  )}
                 </div>
               </div>
 

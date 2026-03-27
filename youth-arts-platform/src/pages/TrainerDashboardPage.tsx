@@ -49,6 +49,7 @@ type NotificationRow = {
   subject: string
   body: string
   created_at: string
+  read_at: string | null
 }
 
 type SubmissionFilter = 'submitted' | 'graded' | 'all'
@@ -113,6 +114,7 @@ export function TrainerDashboardPage() {
 
   const [loading, setLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
 
   async function loadSubmissions(userId: string, category: string) {
     let query = supabase
@@ -158,6 +160,8 @@ export function TrainerDashboardPage() {
     if (includeAssignments) {
       await loadAssignments(trainerCategory)
     }
+
+    setLastUpdatedAt(new Date())
   }
 
   async function loadSessions(category: string) {
@@ -176,7 +180,7 @@ export function TrainerDashboardPage() {
   async function loadNotifications(userId: string) {
     const { data, error } = await supabase
       .from('notifications')
-      .select('id, kind, subject, body, created_at')
+      .select('id, kind, subject, body, created_at, read_at')
       .eq('recipient_user_id', userId)
       .order('created_at', { ascending: false })
       .limit(5)
@@ -263,6 +267,7 @@ export function TrainerDashboardPage() {
         await loadSubmissions(user.id, categoryString)
         await loadAssignments(categoryString)
         await loadSessions(categoryString)
+        setLastUpdatedAt(new Date())
       } catch (err: any) {
         setErrorMessage(normalizeErrorMessage(err?.message ?? 'Failed to load trainer data.'))
       }
@@ -275,11 +280,36 @@ export function TrainerDashboardPage() {
     if (!trainerCategory) return
 
     await loadAssignments(trainerCategory)
+    setLastUpdatedAt(new Date())
   }
 
   async function refreshSessions() {
     if (!trainerCategory) return
     await loadSessions(trainerCategory)
+    setLastUpdatedAt(new Date())
+  }
+
+  async function handleMarkNotificationAsRead(notificationId: string) {
+    const target = notifications.find((row) => row.id === notificationId)
+    if (!target || target.read_at) return
+
+    const readAtIso = new Date().toISOString()
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read_at: readAtIso })
+      .eq('id', notificationId)
+
+    if (error) {
+      setErrorMessage(normalizeErrorMessage(error.message))
+      return
+    }
+
+    setNotifications((current) =>
+      current.map((row) =>
+        row.id === notificationId ? { ...row, read_at: readAtIso } : row,
+      ),
+    )
+    setLastUpdatedAt(new Date())
   }
 
   useEffect(() => {
@@ -456,6 +486,10 @@ export function TrainerDashboardPage() {
             Review student progress and add feedback.
           </p>
 
+          <div className="mini-meta" style={{ marginBottom: '1rem', textAlign: 'center' }}>
+            Last updated: {lastUpdatedAt ? lastUpdatedAt.toLocaleString() : '—'}
+          </div>
+
           <div className="dashboard-grid">
             <div className="card card-surface card-trainer">
               <h3 className="card-title">Pending Submissions</h3>
@@ -564,6 +598,19 @@ export function TrainerDashboardPage() {
             </div>
 
             <div className="dashboard-side">
+              <div className="card card-surface card-demo-readiness">
+                <div className="card-title">Demo Readiness</div>
+                <div className="mini-meta" style={{ marginTop: '0.45rem' }}>
+                  Role: Trainer
+                </div>
+                <div className="mini-meta">
+                  Category: {trainerCategory ? formatCategory(trainerCategory) : 'Not set'}
+                </div>
+                <div className="mini-meta">Pending reviews: {pendingCount}</div>
+                <div className="mini-meta">Reviewed submissions: {gradedCount}</div>
+                <div className="mini-meta">Upcoming sessions: {sessions.length}</div>
+              </div>
+
               <div className="card card-surface card-create-assignment">
                 <div className="card-title">Create Assignment</div>
                 <div className="mini-meta" style={{ marginTop: '0.45rem' }}>
@@ -878,7 +925,24 @@ export function TrainerDashboardPage() {
                   <div style={{ marginTop: '0.75rem' }}>
                     {notifications.map((notification) => (
                       <div key={notification.id} className="assignment-item" style={{ borderBottom: 0 }}>
-                        <div className="assignment-title">{notification.subject}</div>
+                        <div className="assignment-title-row">
+                          <div className="assignment-title">{notification.subject}</div>
+                          <div className="notification-actions">
+                            <span className={`status-chip ${notification.read_at ? 'graded' : 'submitted'}`}>
+                              {notification.read_at ? 'Read' : 'New'}
+                            </span>
+                            {!notification.read_at && (
+                              <button
+                                type="button"
+                                className="text-button"
+                                style={{ border: '1px solid #e5e7eb', padding: '0.2rem 0.6rem' }}
+                                onClick={() => handleMarkNotificationAsRead(notification.id)}
+                              >
+                                Mark as read
+                              </button>
+                            )}
+                          </div>
+                        </div>
                         <div className="mini-meta" style={{ marginTop: '0.25rem' }}>
                           {notification.body}
                         </div>

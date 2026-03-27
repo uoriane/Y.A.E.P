@@ -58,6 +58,14 @@ type NotificationRow = {
   read_at: string | null
 }
 
+type TrainerAssignmentRow = {
+  trainer_id: string
+}
+
+type TrainerNameRow = {
+  full_name: string | null
+}
+
 type AssignmentViewFilter = 'all' | 'not-submitted' | 'submitted' | 'graded'
 
 function formatCategory(value: string): string {
@@ -106,6 +114,8 @@ export function DashboardPage() {
   const [uploading, setUploading] = useState(false)
   const [pageLoading, setPageLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [assignedTrainerName, setAssignedTrainerName] = useState<string>('Not assigned')
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
 
   const activeAssignment = assignments.find(
     (assignment) => assignment.id === activeAssignmentId,
@@ -218,11 +228,30 @@ export function DashboardPage() {
 
       setApplicationStatus(status)
 
+      const { data: trainerAssignment } = await supabase
+        .from('trainer_student_assignments')
+        .select('trainer_id')
+        .eq('student_id', user.id)
+        .maybeSingle<TrainerAssignmentRow>()
+
+      if (trainerAssignment?.trainer_id) {
+        const { data: trainerProfile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('user_id', trainerAssignment.trainer_id)
+          .maybeSingle<TrainerNameRow>()
+
+        setAssignedTrainerName(trainerProfile?.full_name || 'Assigned trainer')
+      } else {
+        setAssignedTrainerName('Not assigned')
+      }
+
       if (status !== 'approved') {
         setAssignments([])
         setSubmissions([])
         setTrainingSessions([])
         setActiveAssignmentId('')
+        setLastUpdatedAt(new Date())
         setPageLoading(false)
         return
       }
@@ -271,6 +300,8 @@ export function DashboardPage() {
       } else {
         setTrainingSessions((sessionRows ?? []) as TrainingSession[])
       }
+
+      setLastUpdatedAt(new Date())
 
       setPageLoading(false)
     })()
@@ -365,6 +396,7 @@ export function DashboardPage() {
       if (submissionsErr) throw submissionsErr
       setSubmissions(submissionData ?? [])
       setFileToUpload(null)
+      setLastUpdatedAt(new Date())
     } catch (err: unknown) {
       const fallback = 'Upload failed. Please try again.'
       const message =
@@ -375,6 +407,30 @@ export function DashboardPage() {
     } finally {
       setUploading(false)
     }
+  }
+
+  async function handleMarkNotificationAsRead(notificationId: string) {
+    const target = notifications.find((row) => row.id === notificationId)
+    if (!target || target.read_at) return
+
+    const readAtIso = new Date().toISOString()
+
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read_at: readAtIso })
+      .eq('id', notificationId)
+
+    if (error) {
+      setErrorMessage(normalizeErrorMessage(error.message))
+      return
+    }
+
+    setNotifications((current) =>
+      current.map((row) =>
+        row.id === notificationId ? { ...row, read_at: readAtIso } : row,
+      ),
+    )
+    setLastUpdatedAt(new Date())
   }
 
   return (
@@ -388,8 +444,25 @@ export function DashboardPage() {
             View your assignments, track progress, and review feedback.
           </p>
 
+          <div className="mini-meta" style={{ marginBottom: '1rem', textAlign: 'center' }}>
+            Last updated: {lastUpdatedAt ? lastUpdatedAt.toLocaleString() : '—'}
+          </div>
+
           <div className="dashboard-grid">
             <div className="dashboard-side">
+              <div className="card card-surface card-demo-readiness">
+                <div className="card-title">Demo Readiness</div>
+                <div className="mini-meta" style={{ marginTop: '0.45rem' }}>
+                  Role: Student
+                </div>
+                <div className="mini-meta">Application status: {applicationStatus || 'pending'}</div>
+                <div className="mini-meta">Assigned trainer: {assignedTrainerName}</div>
+                <div className="mini-meta">Upcoming sessions: {trainingSessions.length}</div>
+                <div className="mini-meta">
+                  Submissions: {submittedCount} submitted • {gradedCount} graded
+                </div>
+              </div>
+
               <div className="card card-surface card-student">
                 <div className="assignment-title-row">
                   <h3 className="card-title">Your Assignments</h3>
@@ -677,9 +750,21 @@ export function DashboardPage() {
                       <div key={notification.id} className="assignment-item" style={{ borderBottom: 0 }}>
                         <div className="assignment-title-row">
                           <div className="assignment-title">{notification.subject}</div>
-                          <span className={`status-chip ${notification.read_at ? 'graded' : 'submitted'}`}>
-                            {notification.read_at ? 'Read' : 'New'}
-                          </span>
+                          <div className="notification-actions">
+                            <span className={`status-chip ${notification.read_at ? 'graded' : 'submitted'}`}>
+                              {notification.read_at ? 'Read' : 'New'}
+                            </span>
+                            {!notification.read_at && (
+                              <button
+                                type="button"
+                                className="text-button"
+                                style={{ border: '1px solid #e5e7eb', padding: '0.2rem 0.6rem' }}
+                                onClick={() => handleMarkNotificationAsRead(notification.id)}
+                              >
+                                Mark as read
+                              </button>
+                            )}
+                          </div>
                         </div>
                         <div className="mini-meta">{notification.body}</div>
                         <div className="mini-meta" style={{ marginTop: '0.25rem' }}>
