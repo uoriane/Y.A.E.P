@@ -9,6 +9,7 @@ import { DashboardPage } from './pages/DashboardPage.tsx'
 import { TrainerDashboardPage } from './pages/TrainerDashboardPage.tsx'
 import { AdminDashboardPage } from './pages/AdminDashboardPage.tsx'
 import { HelpPage } from './pages/HelpPage.tsx'
+import { ProfilePage } from './pages/ProfilePage.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -18,6 +19,7 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/signin" element={<SignInPage />} />
         <Route path="/help" element={<HelpPage />} />
+        <Route path="/profile" element={<ProfilePage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route
           path="/trainer-dashboard"

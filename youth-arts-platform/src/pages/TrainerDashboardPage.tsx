@@ -33,6 +33,24 @@ type TrainerProfileRow = {
   category: string | null
 }
 
+type TrainingSession = {
+  id: string
+  title: string
+  session_date: string
+  start_time: string | null
+  end_time: string | null
+  location: string | null
+  description: string | null
+}
+
+type NotificationRow = {
+  id: string
+  kind: 'registration' | 'selection-result' | 'announcement' | 'reminder' | 'general'
+  subject: string
+  body: string
+  created_at: string
+}
+
 type SubmissionFilter = 'submitted' | 'graded' | 'all'
 
 function formatCategory(value: string): string {
@@ -52,6 +70,18 @@ function normalizeErrorMessage(message: string): string {
     return 'Database setup is incomplete. The submissions table is missing. Run supabase/schema.sql in Supabase SQL Editor, then reload the app.'
   }
 
+  if (message.includes("Could not find the table 'public.training_sessions'")) {
+    return 'Database setup is incomplete. The training sessions table is missing. Run supabase/schema.sql and reload.'
+  }
+
+  if (message.includes("Could not find the table 'public.notifications'")) {
+    return 'Database setup is incomplete. The notifications table is missing. Run supabase/schema.sql and reload.'
+  }
+
+  if (message.includes("Could not find the table 'public.trainer_student_assignments'")) {
+    return 'Database setup is incomplete. Trainer-student assignments table is missing. Run supabase/schema.sql and reload.'
+  }
+
   return message
 }
 
@@ -60,6 +90,8 @@ export function TrainerDashboardPage() {
   const [trainerUserId, setTrainerUserId] = useState<string>('')
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
+  const [sessions, setSessions] = useState<TrainingSession[]>([])
+  const [notifications, setNotifications] = useState<NotificationRow[]>([])
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<string>('')
   const [submissionFilter, setSubmissionFilter] = useState<SubmissionFilter>('submitted')
   const [searchText, setSearchText] = useState('')
@@ -68,11 +100,90 @@ export function TrainerDashboardPage() {
   const [feedback, setFeedback] = useState('')
   const [newAssignmentTitle, setNewAssignmentTitle] = useState('')
   const [newAssignmentDueDate, setNewAssignmentDueDate] = useState('')
+  const [newSessionTitle, setNewSessionTitle] = useState('')
+  const [newSessionDate, setNewSessionDate] = useState('')
+  const [newSessionStart, setNewSessionStart] = useState('')
+  const [newSessionEnd, setNewSessionEnd] = useState('')
+  const [newSessionLocation, setNewSessionLocation] = useState('')
+  const [newSessionDescription, setNewSessionDescription] = useState('')
   const [creatingAssignment, setCreatingAssignment] = useState(false)
+  const [creatingSession, setCreatingSession] = useState(false)
   const [assignmentMessage, setAssignmentMessage] = useState<string | null>(null)
+  const [sessionMessage, setSessionMessage] = useState<string | null>(null)
 
   const [loading, setLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
+  async function loadSubmissions(userId: string, category: string) {
+    let query = supabase
+      .from('submissions')
+      .select(
+        'id, student_id, trainer_id, category, assignment_id, assignment_title, student_name, file_path, submitted_at, status, grade, feedback, graded_at',
+      )
+      .order('submitted_at', { ascending: false })
+
+    query = query.or(`trainer_id.eq.${userId},category.eq.${category}`)
+
+    const { data, error } = await query
+
+    if (error) throw error
+
+    const rows = (data ?? []) as Submission[]
+    setSubmissions(rows)
+    setSelectedSubmissionId((currentId) => {
+      if (currentId && rows.some((submission) => submission.id === currentId)) {
+        return currentId
+      }
+      return rows[0]?.id ?? ''
+    })
+  }
+
+  async function loadAssignments(category: string) {
+    const { data, error } = await supabase
+      .from('assignments')
+      .select('id, title, due_date, created_at')
+      .eq('category', category)
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+    setAssignments((data ?? []) as AssignmentRow[])
+  }
+
+  async function refreshTrainerData(options?: { includeAssignments?: boolean }) {
+    const includeAssignments = options?.includeAssignments ?? false
+    if (!trainerCategory || !trainerUserId) return
+
+    await loadSubmissions(trainerUserId, trainerCategory)
+
+    if (includeAssignments) {
+      await loadAssignments(trainerCategory)
+    }
+  }
+
+  async function loadSessions(category: string) {
+    const { data, error } = await supabase
+      .from('training_sessions')
+      .select('id, title, session_date, start_time, end_time, location, description')
+      .eq('category', category)
+      .gte('session_date', new Date().toISOString().slice(0, 10))
+      .order('session_date', { ascending: true })
+      .limit(8)
+
+    if (error) throw error
+    setSessions((data ?? []) as TrainingSession[])
+  }
+
+  async function loadNotifications(userId: string) {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('id, kind, subject, body, created_at')
+      .eq('recipient_user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(5)
+
+    if (error) throw error
+    setNotifications((data ?? []) as NotificationRow[])
+  }
 
   const filteredSubmissions = useMemo(() => {
     const query = searchText.trim().toLowerCase()
@@ -136,40 +247,24 @@ export function TrainerDashboardPage() {
       const categoryString = typeof categoryValue === 'string' ? categoryValue : ''
       setTrainerCategory(categoryString)
 
+      try {
+        await loadNotifications(user.id)
+      } catch (err: any) {
+        setErrorMessage(normalizeErrorMessage(err?.message ?? 'Failed to load notifications.'))
+      }
+
       if (!categoryString) {
         setErrorMessage('Trainer category is missing. Ask an administrator to assign your category.')
         setLoading(false)
         return
       }
 
-      const { data: submissionData, error: submissionsErr } = await supabase
-        .from('submissions')
-        .select(
-          'id, student_id, trainer_id, category, assignment_id, assignment_title, student_name, file_path, submitted_at, status, grade, feedback, graded_at',
-        )
-        .eq('category', categoryString)
-        .order('submitted_at', { ascending: false })
-
-      if (submissionsErr) {
-        setErrorMessage(normalizeErrorMessage(submissionsErr.message))
-        setSubmissions([])
-        setSelectedSubmissionId('')
-      } else {
-        const rows = submissionData ?? []
-        setSubmissions(rows)
-        setSelectedSubmissionId(rows[0]?.id ?? '')
-      }
-
-      const { data: assignmentData, error: assignmentErr } = await supabase
-        .from('assignments')
-        .select('id, title, due_date, created_at')
-        .eq('category', categoryString)
-        .order('created_at', { ascending: false })
-
-      if (assignmentErr) {
-        setErrorMessage(normalizeErrorMessage(assignmentErr.message))
-      } else {
-        setAssignments((assignmentData ?? []) as AssignmentRow[])
+      try {
+        await loadSubmissions(user.id, categoryString)
+        await loadAssignments(categoryString)
+        await loadSessions(categoryString)
+      } catch (err: any) {
+        setErrorMessage(normalizeErrorMessage(err?.message ?? 'Failed to load trainer data.'))
       }
 
       setLoading(false)
@@ -179,15 +274,25 @@ export function TrainerDashboardPage() {
   async function refreshAssignments() {
     if (!trainerCategory) return
 
-    const { data, error } = await supabase
-      .from('assignments')
-      .select('id, title, due_date, created_at')
-      .eq('category', trainerCategory)
-      .order('created_at', { ascending: false })
-
-    if (error) throw error
-    setAssignments((data ?? []) as AssignmentRow[])
+    await loadAssignments(trainerCategory)
   }
+
+  async function refreshSessions() {
+    if (!trainerCategory) return
+    await loadSessions(trainerCategory)
+  }
+
+  useEffect(() => {
+    if (!trainerCategory || !trainerUserId) return
+
+    const timer = window.setInterval(() => {
+      refreshTrainerData().catch(() => {
+        // Silent polling failure to avoid noisy UX; manual actions still report errors.
+      })
+    }, 15000)
+
+    return () => window.clearInterval(timer)
+  }, [trainerCategory, trainerUserId])
 
   useEffect(() => {
     const selected = filteredSubmissions.find((s) => s.id === selectedSubmissionId)
@@ -248,19 +353,7 @@ export function TrainerDashboardPage() {
 
       if (updateErr) throw updateErr
 
-      // Refresh list
-      const { data: submissionData, error: submissionsErr } = await supabase
-        .from('submissions')
-        .select(
-          'id, student_id, trainer_id, category, assignment_id, assignment_title, student_name, file_path, submitted_at, status, grade, feedback, graded_at',
-        )
-        .eq('category', trainerCategory)
-        .order('submitted_at', { ascending: false })
-
-      if (submissionsErr) throw submissionsErr
-      const next = submissionData ?? []
-      setSubmissions(next)
-      setSelectedSubmissionId(next.find((submission) => submission.status === 'submitted')?.id ?? next[0]?.id ?? '')
+      await refreshTrainerData()
       setGrade('')
       setFeedback('')
     } catch (err: any) {
@@ -307,9 +400,54 @@ export function TrainerDashboardPage() {
     }
   }
 
+  async function handleCreateSession(event: FormEvent) {
+    event.preventDefault()
+
+    if (!newSessionTitle.trim() || !newSessionDate) {
+      setSessionMessage('Session title and date are required.')
+      return
+    }
+
+    if (!trainerCategory || !trainerUserId) {
+      setSessionMessage('Trainer category or account is missing.')
+      return
+    }
+
+    setCreatingSession(true)
+    setSessionMessage(null)
+
+    try {
+      const { error } = await supabase.from('training_sessions').insert({
+        category: trainerCategory,
+        trainer_id: trainerUserId,
+        title: newSessionTitle.trim(),
+        session_date: newSessionDate,
+        start_time: newSessionStart || null,
+        end_time: newSessionEnd || null,
+        location: newSessionLocation || null,
+        description: newSessionDescription || null,
+      })
+
+      if (error) throw error
+
+      setNewSessionTitle('')
+      setNewSessionDate('')
+      setNewSessionStart('')
+      setNewSessionEnd('')
+      setNewSessionLocation('')
+      setNewSessionDescription('')
+      setSessionMessage('Training session added successfully.')
+      await refreshSessions()
+    } catch (err: any) {
+      setSessionMessage(normalizeErrorMessage(err?.message ?? 'Unable to create session.'))
+    } finally {
+      setCreatingSession(false)
+    }
+  }
+
   return (
     <SiteLayout>
-      <section className="section">
+      <section className="section dashboard-section trainer-dashboard">
         <div className="section-inner">
           <h2 className="section-title" style={{ marginBottom: '0.5rem' }}>
             Trainer Dashboard
@@ -319,12 +457,28 @@ export function TrainerDashboardPage() {
           </p>
 
           <div className="dashboard-grid">
-            <div className="card">
+            <div className="card card-surface card-trainer">
               <h3 className="card-title">Pending Submissions</h3>
 
               <div className="mini-meta" style={{ marginTop: '0.5rem' }}>
                 Focus: {trainerCategory ? formatCategory(trainerCategory) : '—'}
               </div>
+
+              <button
+                type="button"
+                className="text-button"
+                style={{ marginTop: '0.55rem', border: '1px solid #e5e7eb' }}
+                onClick={() => {
+                  setErrorMessage(null)
+                  refreshTrainerData({ includeAssignments: true }).catch((err: any) => {
+                    setErrorMessage(
+                      normalizeErrorMessage(err?.message ?? 'Unable to refresh trainer data.'),
+                    )
+                  })
+                }}
+              >
+                Refresh submissions
+              </button>
 
               <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
                 <select
@@ -394,9 +548,9 @@ export function TrainerDashboardPage() {
                         <div className="assignment-item" style={{ borderBottom: 0 }}>
                           <div className="assignment-title-row">
                             <div className="assignment-title">{s.student_name}</div>
-                            <div className="mini-meta">
+                            <span className={`status-chip ${s.status}`}>
                               {s.status === 'graded' ? 'Reviewed' : 'Pending'}
-                            </div>
+                            </span>
                           </div>
                           <div className="mini-meta">
                             {s.assignment_title}
@@ -410,7 +564,7 @@ export function TrainerDashboardPage() {
             </div>
 
             <div className="dashboard-side">
-              <div className="card">
+              <div className="card card-surface card-create-assignment">
                 <div className="card-title">Create Assignment</div>
                 <div className="mini-meta" style={{ marginTop: '0.45rem' }}>
                   Create assignments for {trainerCategory ? formatCategory(trainerCategory) : 'your category'}.
@@ -486,7 +640,7 @@ export function TrainerDashboardPage() {
                 </div>
               </div>
 
-              <div className="card">
+              <div className="card card-surface card-review">
                 <div className="card-title">Review & Grade</div>
 
                 {selectedSubmission ? (
@@ -500,6 +654,25 @@ export function TrainerDashboardPage() {
                     <div className="mini-meta" style={{ marginTop: '0.35rem' }}>
                       Submitted: {new Date(selectedSubmission.submitted_at).toLocaleDateString()}
                     </div>
+
+                    <div className="mini-meta" style={{ marginTop: '0.35rem' }}>
+                      Status:{' '}
+                      <span className={`status-chip ${selectedSubmission.status}`}>
+                        {selectedSubmission.status}
+                      </span>
+                    </div>
+
+                    {selectedSubmission.status === 'graded' && (
+                      <div className="grade-box">
+                        <div className="mini-meta">
+                          Current Grade:{' '}
+                          <span className="grade-score">{selectedSubmission.grade ?? '-'}</span>
+                        </div>
+                        <div className="mini-meta" style={{ marginTop: '0.35rem' }}>
+                          Feedback: {selectedSubmission.feedback ?? '—'}
+                        </div>
+                      </div>
+                    )}
 
                     <a
                       className="text-button"
@@ -559,25 +732,163 @@ export function TrainerDashboardPage() {
                 )}
               </div>
 
-              <div className="card">
+              <div className="card card-surface card-trainer">
                 <div className="card-title">Activity Snapshot</div>
-                <div
-                  style={{
-                    marginTop: '0.75rem',
-                    display: 'grid',
-                    gap: '0.75rem',
-                  }}
-                >
-                  <div className="mini-meta">
-                    <strong style={{ color: '#111827' }}>{pendingCount}</strong> Pending reviews
+                <div className="metric-grid" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                  <div className="metric-tile pending">
+                    <span className="metric-value">{pendingCount}</span>
+                    <span className="metric-label">Pending reviews</span>
                   </div>
-                  <div className="mini-meta">
-                    <strong style={{ color: '#111827' }}>{gradedCount}</strong> Reviewed submissions
+                  <div className="metric-tile graded">
+                    <span className="metric-value">{gradedCount}</span>
+                    <span className="metric-label">Reviewed submissions</span>
                   </div>
+                </div>
+                <div style={{ marginTop: '0.75rem' }}>
                   <div className="mini-meta">
                     Grade and feedback updates are reflected immediately on student dashboards.
                   </div>
                 </div>
+              </div>
+
+              <div className="card card-surface card-training-schedule">
+                <div className="card-title">Training Schedule</div>
+                <div className="mini-meta" style={{ marginTop: '0.45rem' }}>
+                  Add session dates for your category.
+                </div>
+
+                <form onSubmit={handleCreateSession} style={{ marginTop: '0.85rem' }}>
+                  <div className="form-field">
+                    <label htmlFor="sessionTitle">Session title</label>
+                    <input
+                      id="sessionTitle"
+                      value={newSessionTitle}
+                      onChange={(event) => setNewSessionTitle(event.target.value)}
+                      placeholder="e.g. Studio Composition Workshop"
+                      required
+                    />
+                  </div>
+
+                  <div className="form-field">
+                    <label htmlFor="sessionDate">Session date</label>
+                    <input
+                      id="sessionDate"
+                      type="date"
+                      value={newSessionDate}
+                      onChange={(event) => setNewSessionDate(event.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    <div className="form-field">
+                      <label htmlFor="sessionStart">Start time</label>
+                      <input
+                        id="sessionStart"
+                        type="time"
+                        value={newSessionStart}
+                        onChange={(event) => setNewSessionStart(event.target.value)}
+                      />
+                    </div>
+
+                    <div className="form-field">
+                      <label htmlFor="sessionEnd">End time</label>
+                      <input
+                        id="sessionEnd"
+                        type="time"
+                        value={newSessionEnd}
+                        onChange={(event) => setNewSessionEnd(event.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-field">
+                    <label htmlFor="sessionLocation">Location</label>
+                    <input
+                      id="sessionLocation"
+                      value={newSessionLocation}
+                      onChange={(event) => setNewSessionLocation(event.target.value)}
+                      placeholder="e.g. Kigali Creative Hub"
+                    />
+                  </div>
+
+                  <div className="form-field">
+                    <label htmlFor="sessionDescription">Description</label>
+                    <textarea
+                      id="sessionDescription"
+                      rows={3}
+                      value={newSessionDescription}
+                      onChange={(event) => setNewSessionDescription(event.target.value)}
+                      style={{
+                        borderRadius: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        padding: '0.6rem 0.75rem',
+                        font: 'inherit',
+                        width: '100%',
+                        resize: 'vertical',
+                      }}
+                    />
+                  </div>
+
+                  <button type="submit" className="primary-button" style={{ width: '100%' }} disabled={creatingSession}>
+                    {creatingSession ? 'Saving session...' : 'Add Session'}
+                  </button>
+                </form>
+
+                {sessionMessage && (
+                  <div
+                    className="mini-meta"
+                    style={{
+                      marginTop: '0.65rem',
+                      color: sessionMessage.includes('successfully') ? '#166534' : '#b91c1c',
+                    }}
+                  >
+                    {sessionMessage}
+                  </div>
+                )}
+
+                <div style={{ marginTop: '1rem' }}>
+                  {sessions.length === 0 ? (
+                    <div className="mini-meta">No upcoming sessions yet.</div>
+                  ) : (
+                    sessions.map((session) => (
+                      <div key={session.id} className="assignment-item" style={{ borderBottom: 0 }}>
+                        <div className="assignment-title-row">
+                          <div className="assignment-title">{session.title}</div>
+                          <div className="mini-meta">{new Date(session.session_date).toLocaleDateString()}</div>
+                        </div>
+                        <div className="mini-meta">
+                          {session.start_time ? session.start_time.slice(0, 5) : 'Time TBA'}
+                          {session.end_time ? ` - ${session.end_time.slice(0, 5)}` : ''}
+                          {session.location ? ` • ${session.location}` : ''}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="card card-surface card-notifications">
+                <div className="card-title">Notifications</div>
+                {notifications.length === 0 ? (
+                  <div className="mini-meta" style={{ marginTop: '0.45rem' }}>
+                    No notifications yet.
+                  </div>
+                ) : (
+                  <div style={{ marginTop: '0.75rem' }}>
+                    {notifications.map((notification) => (
+                      <div key={notification.id} className="assignment-item" style={{ borderBottom: 0 }}>
+                        <div className="assignment-title">{notification.subject}</div>
+                        <div className="mini-meta" style={{ marginTop: '0.25rem' }}>
+                          {notification.body}
+                        </div>
+                        <div className="mini-meta" style={{ marginTop: '0.25rem' }}>
+                          {new Date(notification.created_at).toLocaleDateString()} • {notification.kind}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="card assist-card">

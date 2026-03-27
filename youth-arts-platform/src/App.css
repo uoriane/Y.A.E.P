@@ -29,6 +29,22 @@ body {
   background-color: #ffffff;
 }
 
+.dashboard-section {
+  background: linear-gradient(180deg, #ffffff 0%, #fff9fc 100%);
+}
+
+.student-dashboard {
+  background: linear-gradient(180deg, #ffffff 0%, #fff9fc 100%);
+}
+
+.trainer-dashboard {
+  background: linear-gradient(180deg, #ffffff 0%, #fff9fc 100%);
+}
+
+.admin-dashboard {
+  background: linear-gradient(180deg, #ffffff 0%, #fff9fc 100%);
+}
+
 .section:nth-of-type(even) {
   background-color: #f9fafb;
 }
@@ -243,6 +259,53 @@ body {
   gap: 0.5rem;
   width: 100%;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card-surface {
+  border-color: #ece7eb;
+  box-shadow:
+    0 12px 28px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.card-student {
+  background: linear-gradient(180deg, #ffffff 0%, #fffafb 60%);
+}
+
+.card-trainer {
+  background: linear-gradient(180deg, #ffffff 0%, #fffafb 65%);
+}
+
+.card-admin {
+  background: linear-gradient(180deg, #ffffff 0%, #fffafb 65%);
+}
+
+.card-feedback {
+  background: linear-gradient(180deg, #ffffff 0%, #fff8fb 70%);
+}
+
+.card-review {
+  background: linear-gradient(180deg, #ffffff 0%, #fff8fb 70%);
+}
+
+.card-create-assignment {
+  background: linear-gradient(180deg, #fffaf1 0%, #ffffff 72%);
+  border-color: #f7e3bc;
+}
+
+.card-training-schedule {
+  background: linear-gradient(180deg, #f3fbff 0%, #ffffff 72%);
+  border-color: #cfe8f5;
+}
+
+.card-notifications {
+  background: linear-gradient(180deg, #f8fff4 0%, #ffffff 72%);
+  border-color: #d8f0cc;
+}
+
+.card-broadcast {
+  background: linear-gradient(180deg, #f4f6ff 0%, #ffffff 72%);
+  border-color: #d8defa;
 }
 
 .card:hover {
@@ -486,6 +549,112 @@ body {
   color: #6b7280;
 }
 
+.metric-grid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.metric-tile {
+  border-radius: 0.8rem;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid #ece7eb;
+  background: #ffffff;
+  color: #334155;
+  font-size: 0.82rem;
+  position: relative;
+}
+
+.metric-tile::before {
+  content: '';
+  position: absolute;
+  top: 0.5rem;
+  bottom: 0.5rem;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: #ec4899;
+}
+
+.metric-value {
+  display: block;
+  font-size: 1.15rem;
+  line-height: 1.2;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.metric-label {
+  font-size: 0.78rem;
+  color: #475569;
+}
+
+.metric-tile.pending {
+  border-color: #f0d4e2;
+}
+
+.metric-tile.approved,
+.metric-tile.graded {
+  border-color: #f0d4e2;
+}
+
+.metric-tile.rejected {
+  border-color: #f0d4e2;
+}
+
+.metric-tile.submitted {
+  border-color: #f0d4e2;
+}
+
+.grade-box {
+  margin-top: 0.75rem;
+  border-radius: 0.8rem;
+  border: 1px solid #f0d4e2;
+  background: linear-gradient(145deg, #fff8fb 0%, #ffffff 100%);
+  padding: 0.75rem;
+}
+
+.grade-score {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.6rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: #ec4899;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.16rem 0.56rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: capitalize;
+}
+
+.status-chip.submitted,
+.status-chip.pending {
+  background: #fff1f8;
+  color: #9d174d;
+}
+
+.status-chip.graded,
+.status-chip.approved {
+  background: #ffe4f1;
+  color: #831843;
+}
+
+.status-chip.rejected {
+  background: #f3f4f6;
+  color: #374151;
+}
+
 .progress-row {
   display: flex;
   align-items: center;
@@ -511,6 +680,10 @@ body {
 
 @media (max-width: 900px) {
   .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-grid {
     grid-template-columns: 1fr;
   }
 }

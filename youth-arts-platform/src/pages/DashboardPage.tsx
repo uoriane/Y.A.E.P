@@ -38,6 +38,26 @@ type ProfileRow = {
   role: 'student' | 'trainer' | 'admin'
 }
 
+type TrainingSession = {
+  id: string
+  title: string
+  session_date: string
+  start_time: string | null
+  end_time: string | null
+  location: string | null
+  description: string | null
+}
+
+type NotificationRow = {
+  id: string
+  kind: 'registration' | 'selection-result' | 'announcement' | 'reminder' | 'general'
+  subject: string
+  body: string
+  delivery_status: 'queued' | 'sent' | 'failed'
+  created_at: string
+  read_at: string | null
+}
+
 type AssignmentViewFilter = 'all' | 'not-submitted' | 'submitted' | 'graded'
 
 function formatCategory(value: string): string {
@@ -61,6 +81,10 @@ function normalizeErrorMessage(message: string): string {
     return 'Upload failed due to storage permissions. Re-run supabase/schema.sql and try again.'
   }
 
+  if (message.includes('No trainer assigned to this student yet')) {
+    return 'Your trainer has not been assigned yet. Ask the administrator to assign a trainer before submitting.'
+  }
+
   return message
 }
 
@@ -72,6 +96,8 @@ export function DashboardPage() {
   >('')
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [submissions, setSubmissions] = useState<Submission[]>([])
+  const [trainingSessions, setTrainingSessions] = useState<TrainingSession[]>([])
+  const [notifications, setNotifications] = useState<NotificationRow[]>([])
   const [activeAssignmentId, setActiveAssignmentId] = useState('')
 
   const [assignmentFilter, setAssignmentFilter] =
@@ -162,6 +188,15 @@ export function DashboardPage() {
         return
       }
 
+      const { data: notificationRows } = await supabase
+        .from('notifications')
+        .select('id, kind, subject, body, delivery_status, created_at, read_at')
+        .eq('recipient_user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(6)
+
+      setNotifications((notificationRows ?? []) as NotificationRow[])
+
       const { data: applicationRow, error: appErr } = await supabase
         .from('applications')
         .select('status')
@@ -186,6 +221,7 @@ export function DashboardPage() {
       if (status !== 'approved') {
         setAssignments([])
         setSubmissions([])
+        setTrainingSessions([])
         setActiveAssignmentId('')
         setPageLoading(false)
         return
@@ -220,6 +256,20 @@ export function DashboardPage() {
         setErrorMessage(normalizeErrorMessage(submissionsErr.message))
       } else {
         setSubmissions(submissionData ?? [])
+      }
+
+      const { data: sessionRows, error: sessionsErr } = await supabase
+        .from('training_sessions')
+        .select('id, title, session_date, start_time, end_time, location, description')
+        .eq('category', categoryString)
+        .gte('session_date', new Date().toISOString().slice(0, 10))
+        .order('session_date', { ascending: true })
+        .limit(8)
+
+      if (sessionsErr) {
+        setErrorMessage(normalizeErrorMessage(sessionsErr.message))
+      } else {
+        setTrainingSessions((sessionRows ?? []) as TrainingSession[])
       }
 
       setPageLoading(false)
@@ -284,7 +334,6 @@ export function DashboardPage() {
             grade: null,
             feedback: null,
             graded_at: null,
-            trainer_id: null,
           })
           .eq('id', activeSubmission.id)
 
@@ -292,7 +341,6 @@ export function DashboardPage() {
       } else {
         const { error: insertErr } = await supabase.from('submissions').insert({
           student_id: userId,
-          trainer_id: null,
           category: studentCategory,
           assignment_id: activeAssignment.id,
           assignment_title: activeAssignment.title,
@@ -331,7 +379,7 @@ export function DashboardPage() {
 
   return (
     <SiteLayout>
-      <section className="section">
+      <section className="section dashboard-section student-dashboard">
         <div className="section-inner">
           <h2 className="section-title" style={{ marginBottom: '0.5rem' }}>
             Student Dashboard
@@ -342,7 +390,7 @@ export function DashboardPage() {
 
           <div className="dashboard-grid">
             <div className="dashboard-side">
-              <div className="card">
+              <div className="card card-surface card-student">
                 <div className="assignment-title-row">
                   <h3 className="card-title">Your Assignments</h3>
                   <select
@@ -431,7 +479,7 @@ export function DashboardPage() {
                 )}
               </div>
 
-              <div className="card">
+              <div className="card card-surface">
                 <div className="card-title">Upload Your Work</div>
                 <div className="mini-meta" style={{ marginTop: '0.35rem' }}>
                   Select the assignment and upload your file for trainer review.
@@ -499,7 +547,10 @@ export function DashboardPage() {
                 {activeSubmission && (
                   <div style={{ marginTop: '1rem' }}>
                     <div className="mini-meta">
-                      Status: <strong>{activeSubmission.status}</strong>
+                      Status:{' '}
+                      <span className={`status-chip ${activeSubmission.status}`}>
+                        {activeSubmission.status}
+                      </span>
                     </div>
                     <div className="mini-meta" style={{ marginTop: '0.35rem' }}>
                       Submitted: {new Date(activeSubmission.submitted_at).toLocaleDateString()}
@@ -518,9 +569,10 @@ export function DashboardPage() {
                     )}
 
                     {activeSubmission.status === 'graded' && (
-                      <div style={{ marginTop: '0.75rem' }}>
+                      <div className="grade-box">
                         <div className="mini-meta">
-                          Grade: <strong>{activeSubmission.grade ?? '-'}</strong>
+                          Grade:{' '}
+                          <span className="grade-score">{activeSubmission.grade ?? '-'}</span>
                         </div>
                         <div className="mini-meta" style={{ marginTop: '0.35rem' }}>
                           Feedback: {activeSubmission.feedback ?? '—'}
@@ -542,7 +594,7 @@ export function DashboardPage() {
             </div>
 
             <div className="dashboard-side">
-              <div className="card">
+              <div className="card card-surface card-feedback">
                 <div className="progress-row">
                   <div>
                     <div className="card-title">Progress</div>
@@ -561,33 +613,85 @@ export function DashboardPage() {
                   Keep going. Complete submissions to improve your marks.
                 </div>
 
-                <div
-                  style={{
-                    marginTop: '1rem',
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                    gap: '0.75rem',
-                  }}
-                >
-                  <div className="mini-meta">
-                    <strong style={{ color: '#111827' }}>{assignments.length}</strong>
-                    <br />
-                    Total
+                <div className="metric-grid">
+                  <div className="metric-tile">
+                    <span className="metric-value">{assignments.length}</span>
+                    <span className="metric-label">Total</span>
                   </div>
-                  <div className="mini-meta">
-                    <strong style={{ color: '#111827' }}>{submittedCount}</strong>
-                    <br />
-                    Submitted
+                  <div className="metric-tile submitted">
+                    <span className="metric-value">{submittedCount}</span>
+                    <span className="metric-label">Submitted</span>
                   </div>
-                  <div className="mini-meta">
-                    <strong style={{ color: '#111827' }}>{gradedCount}</strong>
-                    <br />
-                    Graded
+                  <div className="metric-tile graded">
+                    <span className="metric-value">{gradedCount}</span>
+                    <span className="metric-label">Graded</span>
                   </div>
                 </div>
               </div>
 
-              <div className="card">
+              <div className="card card-surface card-feedback">
+                <div className="card-title">Upcoming Training Schedule</div>
+                {applicationStatus !== 'approved' ? (
+                  <div className="mini-meta" style={{ marginTop: '0.4rem' }}>
+                    Schedule appears once your application is approved.
+                  </div>
+                ) : trainingSessions.length === 0 ? (
+                  <div className="mini-meta" style={{ marginTop: '0.4rem' }}>
+                    No upcoming sessions yet.
+                  </div>
+                ) : (
+                  <div style={{ marginTop: '0.75rem' }}>
+                    {trainingSessions.map((session) => (
+                      <div key={session.id} className="assignment-item" style={{ borderBottom: 0 }}>
+                        <div className="assignment-title-row">
+                          <div className="assignment-title">{session.title}</div>
+                          <div className="mini-meta">
+                            {new Date(session.session_date).toLocaleDateString()}
+                          </div>
+                        </div>
+                        <div className="mini-meta">
+                          {session.start_time ? session.start_time.slice(0, 5) : 'Time TBA'}
+                          {session.end_time ? ` - ${session.end_time.slice(0, 5)}` : ''}
+                          {session.location ? ` • ${session.location}` : ''}
+                        </div>
+                        {session.description && (
+                          <div className="mini-meta" style={{ marginTop: '0.3rem' }}>
+                            {session.description}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="card card-surface card-feedback">
+                <div className="card-title">Notifications</div>
+                {notifications.length === 0 ? (
+                  <div className="mini-meta" style={{ marginTop: '0.4rem' }}>
+                    No notifications yet.
+                  </div>
+                ) : (
+                  <div style={{ marginTop: '0.75rem' }}>
+                    {notifications.map((notification) => (
+                      <div key={notification.id} className="assignment-item" style={{ borderBottom: 0 }}>
+                        <div className="assignment-title-row">
+                          <div className="assignment-title">{notification.subject}</div>
+                          <span className={`status-chip ${notification.read_at ? 'graded' : 'submitted'}`}>
+                            {notification.read_at ? 'Read' : 'New'}
+                          </span>
+                        </div>
+                        <div className="mini-meta">{notification.body}</div>
+                        <div className="mini-meta" style={{ marginTop: '0.25rem' }}>
+                          {new Date(notification.created_at).toLocaleDateString()} • {notification.kind}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="card card-surface card-feedback">
                 <div className="card-title">Latest Feedback</div>
                 {submissions.length === 0 ? (
                   <div className="mini-meta" style={{ marginTop: '0.15rem' }}>

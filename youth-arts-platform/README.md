@@ -1,37 +1,41 @@
 # Youth Arts Platform
 
-A web platform for youth arts training in Rwanda.
+Web platform supporting youth talent development in Arts, Culture, and Design in Rwanda.
 
 ## Stack
 
 - React + TypeScript + Vite
 - React Router
-- Supabase (Auth, Postgres, Storage)
+- Supabase Auth + Postgres + Storage
 
-## Features
+## Current Features
 
 - Public landing page
 - Registration and sign-in
+- Profile management page
 - Role-based dashboards:
-  - Student dashboard for assignments and submissions
-  - Trainer dashboard for reviewing and grading
-  - Administrator dashboard for application decisions
+  - Student dashboard: assignments, submissions, grades, feedback, training schedule, notifications
+  - Trainer dashboard: assigned student submissions, grading, assignment creation, training session creation, notifications
+  - Admin dashboard: application decisions, user role/category management, strict trainer-student assignment, broadcast notifications, audit logs
+- Strict trainer ownership flow: students are assigned to one trainer; trainer sees assigned students' submissions
+- Notification queue in database
 
 ## Prerequisites
 
 - Node.js 20+
-- A Supabase project
+- npm
+- Supabase project
 
 ## Environment Variables
 
-Create a .env file in the project root and add:
+Create `.env` in this folder:
 
 ```env
 VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
-## Setup
+## Local Setup
 
 1. Install dependencies:
 
@@ -39,30 +43,70 @@ VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 npm install
 ```
 
-2. In Supabase SQL Editor, run:
+2. Run database schema in Supabase SQL Editor:
 
-supabase/schema.sql
+`supabase/schema.sql`
 
-3. Start the app:
+Important: re-run the latest schema whenever updates are made.
+
+3. Start dev server:
 
 ```bash
 npm run dev
 ```
 
+## First-Time Functional Test
+
+1. Register 3 accounts: one student, one trainer, one admin.
+2. Sign in as admin and do the following:
+   - Ensure trainer has role `trainer`
+   - Ensure trainer category matches student category
+   - Approve student application
+   - Assign that student to the trainer in Trainer Assignment panel
+3. Sign in as student and submit an assignment.
+4. Sign in as trainer and verify submission appears and can be graded.
+
+## Future Implementation
+
+Real external email sending is planned for a future phase. The system currently stores notifications in the database and displays them in dashboards.
+
 ## Scripts
 
-- npm run dev: start local development server
-- npm run build: type-check and build production bundle
-- npm run preview: preview production build locally
-- npm run lint: run ESLint
+- `npm run dev`: start local development server
+- `npm run build`: type-check and build
+- `npm run preview`: preview production build locally
+- `npm run lint`: run ESLint
 
-## Project Structure
+## Troubleshooting
 
-- src/App.tsx: landing page
-- src/pages/RegisterPage.tsx: user registration
-- src/pages/SignInPage.tsx: user sign-in
-- src/pages/DashboardPage.tsx: student dashboard
-- src/pages/TrainerDashboardPage.tsx: trainer dashboard
-- src/pages/AdminDashboardPage.tsx: admin dashboard
-- src/lib/supabaseClient.ts: Supabase client setup
-- supabase/schema.sql: database schema and policies
+### Trainer cannot see submitted work
+
+1. Re-run `supabase/schema.sql`.
+2. In admin dashboard, ensure student is:
+   - approved
+   - assigned to a trainer
+3. Ensure trainer and student categories are aligned.
+4. Refresh trainer dashboard and clear search filters.
+5. Sign out/sign in again if role/category/assignment changed recently.
+
+### Search on trainer submissions returns nothing
+
+This usually means submission data is empty due to missing assignment ownership or outdated schema.
+
+Fix: re-run schema, assign trainer to student from admin dashboard, then refresh trainer dashboard.
+
+### SQL/policy/table errors
+
+Re-run latest `supabase/schema.sql`, refresh the browser, and sign in again.
+
+## Key Files
+
+- `src/pages/RegisterPage.tsx`
+- `src/pages/SignInPage.tsx`
+- `src/pages/ProfilePage.tsx`
+- `src/pages/DashboardPage.tsx`
+- `src/pages/TrainerDashboardPage.tsx`
+- `src/pages/AdminDashboardPage.tsx`
+- `src/pages/shared/SiteLayout.tsx`
+- `src/lib/supabaseClient.ts`
+- `supabase/schema.sql`

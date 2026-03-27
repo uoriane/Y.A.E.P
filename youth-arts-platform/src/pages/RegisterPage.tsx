@@ -1,7 +1,10 @@
 import '../App.css'
 import { SiteLayout } from './shared/SiteLayout'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { useNavigate } from 'react-router-dom'
+
+type UserRole = 'student' | 'trainer' | 'admin'
 
 export function RegisterPage() {
   const [fullName, setFullName] = useState('')
@@ -12,6 +15,35 @@ export function RegisterPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function redirectIfAuthenticated() {
+      const { data: authData } = await supabase.auth.getUser()
+      const user = authData.user
+      if (!isMounted || !user) return
+
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('user_id', user.id)
+        .maybeSingle<{ role: UserRole }>()
+
+      const role = profileData?.role ?? user.user_metadata?.role
+
+      if (role === 'trainer') navigate('/trainer-dashboard', { replace: true })
+      else if (role === 'admin') navigate('/admin-dashboard', { replace: true })
+      else navigate('/dashboard', { replace: true })
+    }
+
+    redirectIfAuthenticated()
+
+    return () => {
+      isMounted = false
+    }
+  }, [navigate])
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()

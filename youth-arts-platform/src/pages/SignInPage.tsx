@@ -1,6 +1,6 @@
 import '../App.css'
 import { SiteLayout } from './shared/SiteLayout'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useNavigate } from 'react-router-dom'
 
@@ -24,6 +24,34 @@ export function SignInPage() {
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
 
+  useEffect(() => {
+    let isMounted = true
+
+    async function redirectIfAuthenticated() {
+      const { data: authData } = await supabase.auth.getUser()
+      const user = authData.user
+      if (!isMounted || !user) return
+
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('user_id', user.id)
+        .maybeSingle<{ role: UserRole }>()
+
+      const role = profileData?.role ?? getRoleFromMetadata(user.user_metadata)
+
+      if (role === 'trainer') navigate('/trainer-dashboard', { replace: true })
+      else if (role === 'admin') navigate('/admin-dashboard', { replace: true })
+      else navigate('/dashboard', { replace: true })
+    }
+
+    redirectIfAuthenticated()
+
+    return () => {
+      isMounted = false
+    }
+  }, [navigate])
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError(null)
@@ -43,7 +71,16 @@ export function SignInPage() {
       const { data: userData, error: userErr } = await supabase.auth.getUser()
       if (userErr) throw userErr
 
-      const role = getRoleFromMetadata(userData.user?.user_metadata)
+      const userId = userData.user?.id
+      if (!userId) throw new Error('Unable to resolve current user account.')
+
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('user_id', userId)
+        .maybeSingle<{ role: UserRole }>()
+
+      const role = profileData?.role ?? getRoleFromMetadata(userData.user?.user_metadata)
 
       if (role === 'trainer') navigate('/trainer-dashboard')
       else if (role === 'admin') navigate('/admin-dashboard')
