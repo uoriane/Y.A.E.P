@@ -1,6 +1,6 @@
 import '../../App.css'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabaseClient'
 
 type Props = {
@@ -8,6 +8,7 @@ type Props = {
 }
 
 export function SiteLayout({ children }: Props) {
+  const navigate = useNavigate()
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [dashboardPath, setDashboardPath] = useState('/dashboard')
 
@@ -83,14 +84,14 @@ export function SiteLayout({ children }: Props) {
           style={{ border: 0 }}
           onClick={async () => {
             await supabase.auth.signOut()
-            window.location.href = '/signin'
+            navigate('/signin', { replace: true })
           }}
         >
           Sign Out
         </button>
       </>
     )
-  }, [dashboardPath, isAuthenticated])
+  }, [dashboardPath, isAuthenticated, navigate])
 
   return (
     <div className="app-root">
